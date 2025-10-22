@@ -70,6 +70,7 @@ def get_pinnacle_odds():
 
         # Process events data
         events_count = 0
+        skipped_count = 0
         for event in data.get('events', []):
             # Extract event details
             event_id = event.get('event_id')
@@ -84,17 +85,29 @@ def get_pinnacle_odds():
             periods = event.get('periods', {})
             match_period = periods.get('num_0', {})
 
-            money_line = match_period.get('money_line', {})
+            money_line = match_period.get('money_line')
+
+            # Skip this event if money_line is None/null
+            if money_line is None:
+                logger.debug(f"Skipping event {event_id} - money_line is null")
+                skipped_count += 1
+                continue
+
             home_odds = money_line.get('home')
             draw_odds = money_line.get('draw')
             away_odds = money_line.get('away')
+
+            # Extract max_money_line from meta section
+            meta = match_period.get('meta', {})
+            max_money_line = meta.get('max_money_line')
+            logger.debug(f"Event {event_id} - max_money_line: {max_money_line}")
 
             # SQL query for inserting or updating data using ON CONFLICT
             insert_query = """
                 INSERT INTO odds1x2 (
                     event_id, logged_time, sport_id, league_id, league_name, starts, 
-                    home_team, away_team, home_odds, draw_odds, away_odds
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    home_team, away_team, home_odds, draw_odds, away_odds, max_money_line
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id, logged_time) 
                 DO UPDATE SET
                     sport_id = EXCLUDED.sport_id,
@@ -105,19 +118,20 @@ def get_pinnacle_odds():
                     away_team = EXCLUDED.away_team,
                     home_odds = EXCLUDED.home_odds,
                     draw_odds = EXCLUDED.draw_odds,
-                    away_odds = EXCLUDED.away_odds
+                    away_odds = EXCLUDED.away_odds,
+                    max_money_line = EXCLUDED.max_money_line
             """
 
             # Execute query with data
             cursor.execute(insert_query, (
                 event_id, logged_time, sport_id, league_id, league_name, starts,
-                home_team, away_team, home_odds, draw_odds, away_odds
+                home_team, away_team, home_odds, draw_odds, away_odds, max_money_line
             ))
             events_count += 1
 
         # Save changes to database
         conn.commit()
-        logger.info(f"Processed {events_count} events")
+        logger.info(f"Processed {events_count} events, skipped {skipped_count} events with null money_line")
 
     except requests.exceptions.RequestException as e:
         # Handle API request errors
